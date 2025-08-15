@@ -1,11 +1,18 @@
+# JWT Notes
+
+---
+
+## 1. `MyConfig`: Helper & Configuration Class
+
+```java
 @Configuration
 class MyConfig {
     @Bean
     public UserDetailsService userDetailsService() {
-        UserDetails userDetails = User.builder().
-                username("DURGESH")
-                .password(passwordEncoder().encode("DURGESH")).roles("ADMIN").
-                build();
+        UserDetails userDetails = User.builder()
+            .username("DURGESH")
+            .password(passwordEncoder().encode("DURGESH")).roles("ADMIN")
+            .build();
         return new InMemoryUserDetailsManager(userDetails);
     }
 
@@ -19,30 +26,21 @@ class MyConfig {
         return builder.getAuthenticationManager();
     }
 }
+```
 
-
-my config is just a helper class that provides beans for password encoder and authentication manager and has userdetailservice implemented 
+> **Description:**
+my config is just a helper class that provides beans for password encoder and authentication manager and has userdetailservice implemented
 ✅ So yes — this class is a helper/config class that sets up:
+- an in-memory user
+- password encoding
+- authentication manager
+- All beans are available for Spring Security to use.
 
-an in-memory user
-password encoding
-authentication manager
-All beans are available for Spring Security to use.
+---
 
+## 2. `JwtHelper`: The Backbone for JWT Operations
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+```java
 @Component
 public class JwtHelper {
 
@@ -102,62 +100,33 @@ public class JwtHelper {
         return (username.equals(userDetails.getUsername()) && !isTokenExpired(token));
     }
 
-
 }
+```
 
-
-
-
+> **Description:**
 jwt helper is backbone which helps other file to validate and generate jwt token:
 JwtHelper is essentially the utility/backbone for JWT operations. Its main responsibilities are:
+- **Token Generation:**
+  - `generateToken(UserDetails userDetails)` → creates a JWT for a given user.
+  - `doGenerateToken(...)` → actually builds the token with Claims, Subject, Issue/Expiry date, signature.
+- **Token Parsing / Claims Extraction:**
+  - `getUsernameFromToken(token)` → extracts username
+  - `getExpirationDateFromToken(token)` → extracts expiry
+  - `getClaimFromToken(...)` → generic method
+- **Token Validation:**
+  - `validateToken(token, userDetails)` → checks if the token belongs to the user and is not expired
+- **Token Expiry Check:**
+  - `isTokenExpired(token)` → true if token is expired
+- Used by authentication and security filters/controllers to:
+  - Generate JWTs when users log in
+  - Validate incoming JWTs for protected API calls
+  - Extract user info from JWTs to authenticate requests
 
-Token Generation:
+---
 
-generateToken(UserDetails userDetails) → creates a JWT for a given user.
+## 3. `JwtAuthenticationFilter`: Custom Spring Security Filter
 
-doGenerateToken(...) → actually builds the token with:
-
-Claims (custom data, optional here)
-
-Subject (username)
-
-Issued at & Expiration date
-
-Signature using HS512 + secret key
-
-Token Parsing / Claims Extraction:
-
-getUsernameFromToken(token) → extracts username from JWT.
-
-getExpirationDateFromToken(token) → extracts expiry.
-
-getClaimFromToken(...) → generic method to extract any claim from token.
-
-Token Validation:
-
-validateToken(token, userDetails) → checks if the token belongs to the user and is not expired.
-
-Token Expiry Check:
-
-isTokenExpired(token) → returns true if token is expired.
-
-So yes — this class is used by your authentication and security filters/controllers to:
-
-Generate JWTs when users log in.
-
-Validate incoming JWTs for protected API calls.
-
-Extract user info from JWTs to authenticate requests.
-
-
-
-
-
-
-
-
-
-
+```java
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
@@ -165,32 +134,20 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     @Autowired
     private JwtHelper jwtHelper;
 
-
     @Autowired
     private UserDetailsService userDetailsService;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
-
-//        try {
-//            Thread.sleep(500);
-//        } catch (InterruptedException e) {
-//            throw new RuntimeException(e);
-//        }
         //Authorization
-
         String requestHeader = request.getHeader("Authorization");
-        //Bearer 2352345235sdfrsfgsdfsdf
         logger.info(" Header :  {}", requestHeader);
         String username = null;
         String token = null;
         if (requestHeader != null && requestHeader.startsWith("Bearer")) {
-            //looking good
             token = requestHeader.substring(7);
             try {
-
                 username = this.jwtHelper.getUsernameFromToken(token);
-
             } catch (IllegalArgumentException e) {
                 logger.info("Illegal Argument while fetching the username !!");
                 e.printStackTrace();
@@ -202,98 +159,45 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 e.printStackTrace();
             } catch (Exception e) {
                 e.printStackTrace();
-
             }
-
-
         } else {
             logger.info("Invalid Header Value !! ");
         }
 
-
-        //
         if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-
-
-            //fetch user detail from username
             UserDetails userDetails = this.userDetailsService.loadUserByUsername(username);
             Boolean validateToken = this.jwtHelper.validateToken(token, userDetails);
             if (validateToken) {
-
-                //set the authentication
                 UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
                 authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                 SecurityContextHolder.getContext().setAuthentication(authentication);
-
-
             } else {
                 logger.info("Validation fails !!");
             }
-
-
         }
 
         filterChain.doFilter(request, response);
-
-
     }
 }
+```
 
+> **Description:**
+Exactly! ✅ This is a custom Spring Security filter that you would register in your security configuration.
+**What JwtAuthenticationFilter does:**
+- Extends `OncePerRequestFilter`: runs once per HTTP request
+- Extracts JWT from `Authorization: Bearer <token>` header
+- Parses and validates token via JwtHelper
+- Handles exceptions (expired/malformed token, etc.)
+- If valid, sets authentication into Spring Security context
+- Passes request down the filter chain
 
+---
 
-Exactly! ✅ This is a custom Spring Security filter that you would register in your security configuration. Let me break it down clearly:
+## 4. `SecurityConfig`: Security Configuration
 
-What JwtAuthenticationFilter does:
-
-Extends OncePerRequestFilter:
-
-This ensures the filter runs once per HTTP request.
-
-Perfect for JWT validation because you only want to check the token once per request.
-
-Extracts JWT from the Authorization Header:
-
-Looks for the header: Authorization: Bearer <token>
-
-Removes "Bearer " prefix and gets the raw token.
-
-Parses the Token:
-
-Uses JwtHelper.getUsernameFromToken(token) to extract the username.
-
-Handles exceptions: expired token, malformed token, illegal argument, etc.
-
-Validates the Token:
-
-Checks if the token is valid for the user (jwtHelper.validateToken(token, userDetails)).
-
-Sets Authentication in Security Context:
-
-If token is valid, it creates a UsernamePasswordAuthenticationToken and sets it in SecurityContextHolder.
-
-This is how Spring Security knows the user is authenticated for the current request.
-
-Passes Request Down the Filter Chain:
-
-filterChain.doFilter(request, response) ensures the request continues to the next filter or endpoint.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+```java
 @Configuration
 public class SecurityConfig {
-
 
     @Autowired
     private JwtAuthenticationEntryPoint point;
@@ -302,51 +206,31 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-
         http.csrf(csrf -> csrf.disable())
-                .authorizeRequests().
-                requestMatchers("/test").authenticated().requestMatchers("/auth/login").permitAll()
-                .anyRequest()
-                .authenticated()
+                .authorizeRequests()
+                .requestMatchers("/test").authenticated()
+                .requestMatchers("/auth/login").permitAll()
+                .anyRequest().authenticated()
                 .and().exceptionHandling(ex -> ex.authenticationEntryPoint(point))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
         http.addFilterBefore(filter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
-
-
 }
+```
 
-
-
-
-
-
-
+> **Description:**
 ✅ In short:
+- Defines which endpoints require authentication
+- Handles unauthorized access
+- Configures stateless JWT authentication
+- Adds your custom JWT filter into the Spring Security filter chain
 
-Defines which endpoints require authentication.
-Handles unauthorized access.
-Configures stateless JWT authentication.
-Adds your custom JWT filter into the Spring Security filter chain.
+---
 
+## 5. `AuthController`: REST Login Endpoint
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+```java
 @RestController
 @RequestMapping("/auth")
 public class AuthController {
@@ -357,18 +241,14 @@ public class AuthController {
     @Autowired
     private AuthenticationManager manager;
 
-
     @Autowired
     private JwtHelper helper;
 
     private Logger logger = LoggerFactory.getLogger(AuthController.class);
 
-
     @PostMapping("/login")
     public ResponseEntity<JwtResponse> login(@RequestBody JwtRequest request) {
-
         this.doAuthenticate(request.getEmail(), request.getPassword());
-
 
         UserDetails userDetails = userDetailsService.loadUserByUsername(request.getEmail());
         String token = this.helper.generateToken(userDetails);
@@ -380,101 +260,53 @@ public class AuthController {
     }
 
     private void doAuthenticate(String email, String password) {
-
         UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(email, password);
         try {
             manager.authenticate(authentication);
-
-
         } catch (BadCredentialsException e) {
             throw new BadCredentialsException(" Invalid Username or Password  !!");
         }
-
     }
 
     @ExceptionHandler(BadCredentialsException.class)
     public String exceptionHandler() {
         return "Credentials Invalid !!";
     }
-
 }
+```
 
+> **Flow in AuthController:**
+- **Receives Login Request:**
+  - `@PostMapping("/login")`
+  - Accepts JSON like `{ "email": "DURGESH", "password": "DURGESH" }`
+- **Authenticates Credentials:**
+  - Uses `doAuthenticate` + `AuthenticationManager` (from MyConfig)
+  - Throws BadCredentialsException if invalid
+- **Generates JWT:**
+  - Loads user details from UserDetailsService (in-memory user from MyConfig)
+  - Uses JwtHelper to generate a JWT token
+- **Returns JWT in Response:**
+  - Sends JWT + username back to client
+  - Client will use this JWT in `Authorization: Bearer <token>` header for protected endpoints
+- **Exception Handling:**
+  - Returns a friendly message if login fails
 
+---
 
+## 6. How Everything Works Together
 
+| Component                | Usage                                                    |
+|--------------------------|----------------------------------------------------------|
+| **MyConfig**             | Provides UserDetailsService, PasswordEncoder, and AuthenticationManager |
+| **JwtHelper**            | Generates JWT token for authenticated user               |
+| **JwtAuthenticationFilter** | Validates this token on subsequent requests           |
+| **SecurityConfig**       | Secures `/auth/login` as public endpoint, protects others|
+| **AuthController**       | Entry point for login                                   |
 
+---
 
-
-
-
-
-Flow in AuthController
-
-Receives Login Request
-
-@PostMapping("/login")
-public ResponseEntity<JwtResponse> login(@RequestBody JwtRequest request)
-
-
-Accepts JSON like { "email": "DURGESH", "password": "DURGESH" }.
-
-Authenticates Credentials
-
-this.doAuthenticate(request.getEmail(), request.getPassword());
-
-
-Creates a UsernamePasswordAuthenticationToken.
-
-Uses AuthenticationManager (from MyConfig) to check credentials against the in-memory user.
-
-Throws BadCredentialsException if invalid.
-
-Generates JWT
-
-UserDetails userDetails = userDetailsService.loadUserByUsername(request.getEmail());
-String token = this.helper.generateToken(userDetails);
-
-
-Loads user details from UserDetailsService (in-memory user from MyConfig).
-
-Uses JwtHelper to generate a JWT token.
-
-Returns JWT in Response
-
-JwtResponse response = JwtResponse.builder()
-        .jwtToken(token)
-        .username(userDetails.getUsername()).build();
-
-
-Sends JWT + username back to client.
-
-Client will use this JWT in Authorization: Bearer <token> header for protected endpoints.
-
-Exception Handling
-
-@ExceptionHandler(BadCredentialsException.class)
-public String exceptionHandler() { ... }
-
-
-Returns a friendly message if login fails.
-
-✅ How it uses everything we created:
-Component	Usage
-MyConfig	Provides UserDetailsService, PasswordEncoder, and AuthenticationManager
-JwtHelper	Generates JWT token for authenticated user
-JwtAuthenticationFilter	Not directly used here, but will validate this token on subsequent requests
-SecurityConfig	Secures /auth/login as public endpoint and protects other endpoints
-
-💡 Summary:
-
-AuthController is the entry point for login.
-
-MyConfig checks credentials.
-
-JwtHelper generates JWT.
-
-JwtAuthenticationFilter will later verify this token for secured requests.
-
-
-
-
+> 💡 **Summary:**
+- AuthController is the entry point for login
+- MyConfig checks credentials
+- JwtHelper generates JWT
+- JwtAuthenticationFilter will later verify this token for secured requests
